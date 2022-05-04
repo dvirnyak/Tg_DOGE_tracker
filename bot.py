@@ -1,5 +1,3 @@
-import ctypes
-
 from telegram.ext import Updater, MessageHandler, Filters
 from telegram.ext import CommandHandler
 
@@ -7,36 +5,34 @@ import time
 
 from multiprocessing import Process, Lock
 
-import numpy as np
 import requests
 import json
 
-telegram_bot_token = "5384876139:AAEjUQDuaHdozOuahfrbJbXAJXuzQCzxeQg"
+telegram_bot_token = "5325608136:AAFrbmsGXxbsYKO3oO1SvD12ZK7_Y_2oCBc"
 
 updater = Updater(token=telegram_bot_token, use_context=True)
 dispatcher = updater.dispatcher
-
+lock = Lock()
 
 def start(update, context):
     chat_id = update.effective_chat.id
     context.bot.send_message(chat_id=chat_id,
                              text="Привет, я могу отправить текущий курс DOGE, "
                                   "а также предупреждать о резких скачках(можно настроить). Давай начнём")
-    Lock().acquire()
-    users = {}
+    lock.acquire()
 
     with open("users.json", "r") as f:
         users = json.load(f)
 
-    users[chat_id] = {"state": "default", "limits": [{}]}
+    users[chat_id] = {"state": "default", "limits": []}
 
     with open("users.json", "w") as f:
         json.dump(users, f)
-    Lock().release()
+
+    lock.release()
 
 
 def rates_msg(rate_new, rate_old, time1):
-    msg = ""
     change = 0
     smile = ''
     if (rate_old > rate_new and rate_old != 0):
@@ -44,14 +40,13 @@ def rates_msg(rate_new, rate_old, time1):
         smile = "📉"
     elif (rate_old != 0):
         smile = "📈"
-        change = (rate_new / rate_old - 1)
+        change = 100 * (rate_new / rate_old - 1)
     msg = "{smile} {change:.2f}% за последние {sec} секунд".format(smile=smile, change=change, sec=time1)
-    print("msg:", msg)
     return msg
 
 
 def new_tracking(update, context):
-    Lock().acquire()
+    lock.acquire()
     users = {}
 
     with open("users.json", "r") as f:
@@ -66,7 +61,7 @@ def new_tracking(update, context):
 
     elif (users[chat_id]['state'] == "enter diff"):
         users[chat_id]['state'] = "enter time"
-        users[chat_id]['limits'].append({})
+        users[chat_id]['limits'].append({'time': 1, 'last_check': 0})
         users[chat_id]['limits'][-1]['diff'] = float(user_msg)
         msg = "Ок. Введи за какое время(в секундах) курс должен измениться"
 
@@ -78,17 +73,19 @@ def new_tracking(update, context):
     context.bot.send_message(chat_id=chat_id, text=msg)
     with open('users.json', 'w') as f:
         json.dump(users, f)
-    Lock().release()
+    lock.release()
 
 
 def rate(update, context):
+    lock.acquire()
     with open("rates.json", "r") as f:
         rates_history = list(map(float, json.load(f)))
+    lock.release()
 
     chat_id = update.effective_chat.id
     msg = "1 DOGE = {} USDT\n\n".format(rates_history[-1])
 
-    basic_time = 200
+    basic_time = 3600
     if (rates_history[-basic_time] != 0):
         msg += rates_msg(rates_history[-1], rates_history[-basic_time], basic_time)
 
@@ -97,35 +94,44 @@ def rate(update, context):
 
 
 def notifier():
-    delay = 10
-    with open("users.json", "r") as f:
-        users = json.load(f)
-
-    with open("rates.json", "r") as f:
-        rates_history = list(map(float, json.load(f)))
-
+    delay = 1
     while True:
+        lock.acquire()
+        with open("users.json", "r") as f:
+            users = json.load(f)
+
+        with open("rates.json", "r") as f:
+            rates_history = list(map(float, json.load(f)))
+
         for chat_id in users.keys():
             user = users[chat_id]
             msg = ''
+            index = -1
             for limit in user['limits']:
+                index += 1
                 time_diff, diff = int(limit['time']) + 1, float(limit['diff']) / 100
                 new_rate, old_rate = rates_history[-1], rates_history[-time_diff]
                 if old_rate == 0 or new_rate == 0:
                     continue
 
                 if (new_rate > old_rate and (new_rate / old_rate - 1) >= diff) \
-                        or (new_rate < old_rate and (1 - new_rate / old_rate) >= diff):
+                        or (new_rate < old_rate and (1 - new_rate / old_rate) >= diff)\
+                        and limit['last_check'] - time.time() > time_diff:
                     msg += rates_msg(new_rate, old_rate, time_diff-1) + '\n'
+                    users[chat_id]['limits'][index]['last_check'] = int(time.time())
 
             if len(msg) > 0:
+                msg = "1 DOGE = {} USDT\n\n".format(rates_history[-1]) + msg
                 updater.bot.send_message(chat_id=chat_id,
                                          text=msg)
+        with open('users.json', 'w') as f:
+            json.dump(users, f)
+        lock.release()
         time.sleep(delay)
 
 
 def checker():
-    delay = 5
+    delay = 1
     with open("rates.json", "r") as f:
         rates_history = list(map(float, json.load(f)))
 
@@ -140,12 +146,12 @@ def checker():
             rates_history = rates_history[1:]
             rates_history.append(data['price'])
 
-        time.sleep(delay)
-
-        # Lock().acquire()
+        lock.acquire()
         with open('rates.json', 'w') as f:
             json.dump(rates_history, f)
-        # Lock().release()
+        lock.release()
+
+        time.sleep(delay)
 
 
 def bot():

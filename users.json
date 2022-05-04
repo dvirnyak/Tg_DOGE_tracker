@@ -1,1 +1,1 @@
-{"348630135": {"state": "default", "limits": [{"diff": 0.1, "time": 120.0}, {"diff": 0.1, "time": 1.0}, {"diff": 0.0, "time": 0.0}, {"diff": 0.0, "time": 0}, {"diff": 0.0, "time": 0}, {"diff": 0.0, "time": 1}, {"diff": 0.007, "time": 5}]}}
+{"348630135": {"state": "default", "limits": [{"time": 2, "last_check": 1651701457, "diff": 0.01}, {"time": 60, "last_check": 0, "diff": 0.2}]}}
