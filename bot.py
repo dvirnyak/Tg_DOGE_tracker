@@ -1,12 +1,15 @@
 from telegram.ext import Updater, MessageHandler, Filters
 from telegram.ext import CommandHandler
 
-import time
+import numpy as np
+import matplotlib.pyplot as plt
 
 from multiprocessing import Process, Lock
 
 import requests
 import json
+import time
+
 
 telegram_bot_token = "5325608136:AAFrbmsGXxbsYKO3oO1SvD12ZK7_Y_2oCBc"
 
@@ -132,8 +135,8 @@ def new_tracking(update, context):
 
 def rate(update, context):
     rates_history = load_rates()
-
     chat_id = update.effective_chat.id
+
     msg = "1 DOGE = {} USDT\n\n".format(rates_history[-1])
 
     basic_time = 3600
@@ -143,6 +146,18 @@ def rate(update, context):
     context.bot.send_message(chat_id=chat_id,
                              text=msg)
 
+    y = np.array(rates_history[-basic_time:])
+    x = np.array(range(len(rates_history[-basic_time:])))
+    fig = plt.figure()
+    plt.title("DOGE/USD")
+    plt.xlabel("Seconds")
+    plt.ylabel("Price")
+    plt.plot(x, y)
+
+    lock.acquire()
+    fig.savefig("temp.png", dpi=fig.dpi)
+    context.bot.send_photo(chat_id, photo=open('temp.png', 'rb'))
+    lock.release()
 
 def notifier():
     delay = 1
