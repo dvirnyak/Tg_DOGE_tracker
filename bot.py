@@ -52,15 +52,17 @@ def start(update, context):
 def help(update, context):
     chat_id = update.effective_chat.id
 
-    text = 'Доступные команды: \n\n/rate - текущий курс' \
-           '\n/new - добавить новое отслеживание\n' \
-           '/trackings - посмотреть текущие отслеживания' \
-           '\n/delete N - удалить отслеживание номер N'
+    text = '''Доступные команды:
+    
+           /rate - текущий курс
+           /new - добавить новое отслеживание
+           /trackings - посмотреть текущие отслеживания
+           /delete N - удалить отслеживание номер N'''
     context.bot.send_message(chat_id=chat_id,
                              text=text)
 
 
-def rates_msg(rate_new, rate_old, time1):
+def rates_msg(rate_new, rate_old, time):
     change = 0
     smile = ''
     if (rate_old > rate_new and rate_old != 0):
@@ -69,13 +71,12 @@ def rates_msg(rate_new, rate_old, time1):
     elif (rate_old != 0):
         smile = "📈"
         change = 100 * (rate_new / rate_old - 1)
-    msg = "{smile} {change:.2f}% за последние {sec} секунд".format(smile=smile, change=change, sec=time1)
+    msg = "{smile} {change:.2f}% за последние {sec} секунд".format(smile=smile, change=change, sec=time)
     return msg
 
 
 def trackings(update, context):
     chat_id = str(update.effective_chat.id)
-
     users = load_users()
 
     index = 0
@@ -89,21 +90,21 @@ def trackings(update, context):
 
 
 def delete(update, context):
-    chat_id = str(update.effective_chat.id)
-
     lock.acquire()
-    users = load_users()
 
+    chat_id = str(update.effective_chat.id)
+    users = load_users()
     user_msg = update.message.text
     index = int(user_msg[8:]) - 1
     del users[chat_id]['limits'][index]
     msg = "Как скажешь"
+    context.bot.send_message(chat_id=chat_id, text=msg)
 
     update_users(users)
-    lock.release()
 
-    context.bot.send_message(chat_id=chat_id, text=msg)
+    lock.release()
     trackings(update, context)
+
 
 def new_tracking(update, context):
     lock.acquire()
@@ -111,8 +112,8 @@ def new_tracking(update, context):
     users = load_users()
     chat_id = str(update.effective_chat.id)
     user_msg = update.message.text
-    msg = ''
 
+    msg = ''
     if (users[chat_id]['state'] == "default" and user_msg == "/new"):
         users[chat_id]['state'] = "enter diff"
         msg = "Ок. Введи на сколько % должен измениться курс, чтобы я тебе написал"
@@ -130,6 +131,7 @@ def new_tracking(update, context):
 
     context.bot.send_message(chat_id=chat_id, text=msg)
     update_users(users)
+
     lock.release()
 
 
@@ -138,8 +140,8 @@ def rate(update, context):
     chat_id = update.effective_chat.id
 
     msg = "1 DOGE = {} USDT\n\n".format(rates_history[-1])
-
     basic_time = 3600
+
     if (rates_history[-basic_time] != 0):
         msg += rates_msg(rates_history[-1], rates_history[-basic_time], basic_time)
 
@@ -179,7 +181,7 @@ def notifier():
 
                 if ((new_rate > old_rate and (new_rate / old_rate - 1) >= diff) \
                         or (new_rate < old_rate and (1 - new_rate / old_rate) >= diff))\
-                        and (int(time.time()) - int(limit['last_check']) > time_diff):
+                        and (int(time.time()) - int(limit['last_check']) > time_diff / 2):
                     msg += rates_msg(new_rate, old_rate, time_diff-1) + '\n'
 
                     users[chat_id]['limits'][index]['last_check'] = int(time.time())
