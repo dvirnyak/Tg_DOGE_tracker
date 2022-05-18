@@ -4,18 +4,16 @@ from telegram.ext import CommandHandler
 import numpy as np
 import matplotlib.pyplot as plt
 
-from multiprocessing import Process, Lock
-
 import requests
 import json
 import time
+import asyncio
 
 
 telegram_bot_token = "5325608136:AAFrbmsGXxbsYKO3oO1SvD12ZK7_Y_2oCBc"
 
 updater = Updater(token=telegram_bot_token, use_context=True)
 dispatcher = updater.dispatcher
-lock = Lock()
 
 def load_users():
     with open("users.json", "r") as f:
@@ -40,13 +38,10 @@ def start(update, context):
     context.bot.send_message(chat_id=chat_id,
                              text="Привет, я могу отправить текущий курс DOGE, "
                                   "а также предупреждать о резких скачках(можно настроить). Давай начнём")
-    lock.acquire()
 
     users = load_users()
     users[chat_id] = {"state": "default", "limits": []}
     update_users(users)
-
-    lock.release()
 
 
 def help(update, context):
@@ -54,10 +49,11 @@ def help(update, context):
 
     text = '''Доступные команды:
     
-           /rate - текущий курс
-           /new - добавить новое отслеживание
-           /trackings - посмотреть текущие отслеживания
-           /delete N - удалить отслеживание номер N'''
+/rate - текущий курс
+/new - добавить новое отслеживание
+/trackings - посмотреть текущие отслеживания
+/delete N - удалить отслеживание номер N'''
+
     context.bot.send_message(chat_id=chat_id,
                              text=text)
 
@@ -90,7 +86,6 @@ def trackings(update, context):
 
 
 def delete(update, context):
-    lock.acquire()
 
     chat_id = str(update.effective_chat.id)
     users = load_users()
@@ -102,13 +97,10 @@ def delete(update, context):
 
     update_users(users)
 
-    lock.release()
     trackings(update, context)
 
 
 def new_tracking(update, context):
-    lock.acquire()
-
     users = load_users()
     chat_id = str(update.effective_chat.id)
     user_msg = update.message.text
@@ -117,13 +109,11 @@ def new_tracking(update, context):
     if (users[chat_id]['state'] == "default" and user_msg == "/new"):
         users[chat_id]['state'] = "enter diff"
         msg = "Ок. Введи на сколько % должен измениться курс, чтобы я тебе написал"
-
     elif (users[chat_id]['state'] == "enter diff"):
         users[chat_id]['state'] = "enter time"
         users[chat_id]['limits'].append({'time': 1, 'last_check': 0})
         users[chat_id]['limits'][-1]['diff'] = float(user_msg)
         msg = "Ок. Введи за какое время(в секундах) курс должен измениться"
-
     elif (users[chat_id]['state'] == "enter time"):
         users[chat_id]['state'] = "default"
         users[chat_id]['limits'][-1]['time'] = int(user_msg)
@@ -131,9 +121,6 @@ def new_tracking(update, context):
 
     context.bot.send_message(chat_id=chat_id, text=msg)
     update_users(users)
-
-    lock.release()
-
 
 def rate(update, context):
     rates_history = load_rates()
@@ -156,15 +143,13 @@ def rate(update, context):
     plt.ylabel("Price")
     plt.plot(x, y)
 
-    lock.acquire()
     fig.savefig("temp.png", dpi=fig.dpi)
     context.bot.send_photo(chat_id, photo=open('temp.png', 'rb'))
-    lock.release()
 
-def notifier():
+async def notifier():
     delay = 1
     while True:
-        lock.acquire()
+        print(3)
         users = load_users()
         rates_history = load_rates()
 
@@ -180,9 +165,9 @@ def notifier():
                     continue
 
                 if ((new_rate > old_rate and (new_rate / old_rate - 1) >= diff) \
-                        or (new_rate < old_rate and (1 - new_rate / old_rate) >= diff))\
+                    or (new_rate < old_rate and (1 - new_rate / old_rate) >= diff)) \
                         and (int(time.time()) - int(limit['last_check']) > time_diff / 2):
-                    msg += rates_msg(new_rate, old_rate, time_diff-1) + '\n'
+                    msg += rates_msg(new_rate, old_rate, time_diff - 1) + '\n'
 
                     users[chat_id]['limits'][index]['last_check'] = int(time.time())
 
@@ -191,11 +176,11 @@ def notifier():
                 updater.bot.send_message(chat_id=chat_id,
                                          text=msg)
         update_users(users)
-        lock.release()
-        time.sleep(delay)
+
+        await asyncio.sleep(delay)
 
 
-def checker():
+async def checker():
     delay = 1
     rates_history = load_rates()
 
@@ -203,23 +188,28 @@ def checker():
     currencies = ["DOGEUSDT"]
 
     while True:
+        print(2)
         for i in currencies:
             url = key + i
             data = requests.get(url)
             data = data.json()
             rates_history = rates_history[1:]
             rates_history.append(data['price'])
+            update_rates(rates_history)
 
-        lock.acquire()
-        update_rates(rates_history)
-        lock.release()
-
-        time.sleep(delay)
+        await asyncio.sleep(delay)
 
 
 def bot():
     updater.start_polling()
 
+async def main():
+    bot()
+    task2 = asyncio.create_task(notifier())
+    task3 = asyncio.create_task(checker())
+
+    await task2
+    await task3
 
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("rate", rate))
@@ -229,6 +219,4 @@ dispatcher.add_handler(CommandHandler("trackings", trackings))
 dispatcher.add_handler(CommandHandler("delete", delete))
 dispatcher.add_handler(MessageHandler(Filters.text, new_tracking))
 
-Process(target=checker).start()
-Process(target=bot).start()
-Process(target=notifier()).start()
+asyncio.run(main())

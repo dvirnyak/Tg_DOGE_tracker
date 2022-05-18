@@ -10,3 +10,4 @@ python-telegram-bot==13.11
 requests==2.22.0
 numpy==1.22.3
 matplotlib==2.4.7
+asyncio==3.4.3
