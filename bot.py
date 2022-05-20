@@ -4,13 +4,14 @@ from telegram.ext import CommandHandler
 import numpy as np
 import matplotlib.pyplot as plt
 
-import requests
 import json
 import time
 import asyncio
+import aiohttp
+import io
+import os
 
-
-telegram_bot_token = "5325608136:AAFrbmsGXxbsYKO3oO1SvD12ZK7_Y_2oCBc"
+telegram_bot_token = os.getenv('token')
 
 updater = Updater(token=telegram_bot_token, use_context=True)
 dispatcher = updater.dispatcher
@@ -32,6 +33,11 @@ def update_users(users):
 def update_rates(rates):
     with open("rates.json", "w") as f:
         json.dump(rates, f)
+
+def check_user(users, chat_id):
+    if not (chat_id in users):
+        users[chat_id] = {"state": "default", "limits": []}
+    return users
 
 def start(update, context):
     chat_id = update.effective_chat.id
@@ -67,13 +73,15 @@ def rates_msg(rate_new, rate_old, time):
     elif (rate_old != 0):
         smile = "📈"
         change = 100 * (rate_new / rate_old - 1)
-    msg = "{smile} {change:.2f}% за последние {sec} секунд".format(smile=smile, change=change, sec=time)
+    msg = f"{smile} {change:.2f}% за последние {time} секунд"
     return msg
 
 
 def trackings(update, context):
     chat_id = str(update.effective_chat.id)
     users = load_users()
+
+    users = check_user(users, chat_id)
 
     index = 0
     msg = 'Твои отслеживания:\n\n'
@@ -105,6 +113,8 @@ def new_tracking(update, context):
     chat_id = str(update.effective_chat.id)
     user_msg = update.message.text
 
+    users = check_user(users, chat_id)
+
     msg = ''
     if (users[chat_id]['state'] == "default" and user_msg == "/new"):
         users[chat_id]['state'] = "enter diff"
@@ -122,11 +132,12 @@ def new_tracking(update, context):
     context.bot.send_message(chat_id=chat_id, text=msg)
     update_users(users)
 
+
 def rate(update, context):
     rates_history = load_rates()
     chat_id = update.effective_chat.id
 
-    msg = "1 DOGE = {} USDT\n\n".format(rates_history[-1])
+    msg = f"1 DOGE = {rates_history[-1]} USDT\n\n"
     basic_time = 3600
 
     if (rates_history[-basic_time] != 0):
@@ -143,13 +154,18 @@ def rate(update, context):
     plt.ylabel("Price")
     plt.plot(x, y)
 
-    fig.savefig("temp.png", dpi=fig.dpi)
-    context.bot.send_photo(chat_id, photo=open('temp.png', 'rb'))
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format='png')
+
+    plt.close()
+
+    buffer.seek(0)
+    context.bot.send_photo(chat_id, buffer.read())
+
 
 async def notifier():
     delay = 1
     while True:
-        print(3)
         users = load_users()
         rates_history = load_rates()
 
@@ -172,7 +188,7 @@ async def notifier():
                     users[chat_id]['limits'][index]['last_check'] = int(time.time())
 
             if len(msg) > 0:
-                msg = "1 DOGE = {} USDT\n\n".format(rates_history[-1]) + msg
+                msg = f"1 DOGE = {rates_history[-1]} USDT\n\n" + msg
                 updater.bot.send_message(chat_id=chat_id,
                                          text=msg)
         update_users(users)
@@ -187,17 +203,19 @@ async def checker():
     key = "https://api.binance.com/api/v3/ticker/price?symbol="
     currencies = ["DOGEUSDT"]
 
-    while True:
-        print(2)
-        for i in currencies:
-            url = key + i
-            data = requests.get(url)
-            data = data.json()
-            rates_history = rates_history[1:]
-            rates_history.append(data['price'])
-            update_rates(rates_history)
+    async with aiohttp.ClientSession() as session:
+        while True:
+            for i in currencies:
+                url = key + i
+                async with session.get(url) as resp:
+                    data = await resp.text()
 
-        await asyncio.sleep(delay)
+                data = json.loads(data)
+                rates_history = rates_history[1:]
+                rates_history.append(data['price'])
+                update_rates(rates_history)
+
+            await asyncio.sleep(delay)
 
 
 def bot():
